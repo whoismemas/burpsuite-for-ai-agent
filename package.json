@@ -1,0 +1,18 @@
+{
+  "name": "burpsuite-for-ai-agent",
+  "version": "1.0.0",
+  "description": "Two-way Burp Suite MCP bridge for AI agents — capture traffic, queue scan tasks, send findings back to Burp",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "burp": "node src/index.js --port 9999"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.16.0",
+    "zod": "^3.24.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
