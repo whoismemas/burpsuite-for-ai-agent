@@ -123,17 +123,18 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
         self._log("settings saved: %s" % self.base_url)
 
     def _check_status(self, _event):
-        for port in [9999, 9998, 9997, 9996, 9995]:
-            url = "http://127.0.0.1:%d" % port
-            try:
-                data = self._get_json_from_url(url + "/status")
-                self.base_url = url
-                self.url_field.setText(url)
-                self._log("status: %s" % json.dumps(data))
-                self._log("auto-detected server at %s" % url)
-                return
-            except Exception:
-                continue
+        for host in ["127.0.0.1", "localhost"]:
+            for port in [9999, 9998, 9997, 9996, 9995]:
+                url = "http://%s:%d" % (host, port)
+                try:
+                    data = self._get_json_from_url(url + "/status")
+                    self.base_url = url
+                    self.url_field.setText(url)
+                    self._log("status: %s" % json.dumps(data))
+                    self._log("auto-detected server at %s" % url)
+                    return
+                except Exception:
+                    continue
         self._log_error("status failed: server not found on ports 9995-9999", Exception("not found"))
 
     def _send_requests(self, messages):

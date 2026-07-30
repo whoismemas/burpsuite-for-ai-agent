@@ -631,7 +631,7 @@ function runNucleiScan(url, options = {}) {
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 function startIngestServer(store, preferredPort, token) {
-  const host = '127.0.0.1';
+  const host = '0.0.0.0';
 
   function tryListen(port) {
     return new Promise((resolve, reject) => {
@@ -660,9 +660,8 @@ function handleHttp(req, res, store, token) {
   const rawHost = req.headers.host;
   if (rawHost) {
     const host = rawHost.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
-    if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
-      sendJSON(res, 403, { ok: false, error: 'invalid host' });
-      return;
+    if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1' && host !== '0.0.0.0') {
+      console.error(`[burp-mcp] WARN: connection from non-local host ${host}`);
     }
   }
 
@@ -860,7 +859,8 @@ On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
   console.error(`[burp-mcp] Auth token: ${token}`);
   console.error(`[burp-mcp]`);
   console.error(`[burp-mcp] ── SETUP ──`);
-  console.error(`[burp-mcp] Burp plugin URL: ${ingestHandle.url}`);
+  console.error(`[burp-mcp] Burp plugin URL: http://127.0.0.1:${ingestHandle.port}`);
+  console.error(`[burp-mcp] From Windows if WSL: http://localhost:${ingestHandle.port}`);
   console.error(`[burp-mcp] .mcp.json command: ["node", "${process.argv[1]}", "--port", "${ingestHandle.port}"]`);
   console.error(`[burp-mcp] ─────────────────`);
   console.error(`[burp-mcp]`);
