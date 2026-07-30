@@ -48,12 +48,21 @@ AI Agent ←→ MCP tools
 
 ---
 
-## Quick Start
-
-### 1. Start MCP server
+## Quick Install (one command)
 
 ```bash
-npm install
+bash install.sh
+```
+
+This runs `npm install`, prints Burp plugin instructions, and generates `.mcp.json` for AI agent auto-registration.
+
+---
+
+## Quick Start
+
+### 1. MCP server
+
+```bash
 node src/index.js
 ```
 
