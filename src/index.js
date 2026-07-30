@@ -860,8 +860,11 @@ On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
   console.error(`[burp-mcp]`);
   console.error(`[burp-mcp] ── SETUP ──`);
   console.error(`[burp-mcp] Burp plugin URL: http://127.0.0.1:${ingestHandle.port}`);
-  console.error(`[burp-mcp] From Windows if WSL: http://localhost:${ingestHandle.port}`);
-  console.error(`[burp-mcp] .mcp.json command: ["node", "${process.argv[1]}", "--port", "${ingestHandle.port}"]`);
+  try {
+    const wslIp = execSync("hostname -I 2>/dev/null || echo 127.0.0.1", { encoding: 'utf8', timeout: 2000 }).trim().split(' ')[0];
+    if (wslIp && wslIp !== '127.0.0.1') console.error(`[burp-mcp] From Windows (WSL IP): http://${wslIp}:${ingestHandle.port}`);
+  } catch { /* ok */ }
+  console.error(`[burp-mcp] .mcp.json command: ["node", "${process.argv[1]}"]`);
   console.error(`[burp-mcp] ─────────────────`);
   console.error(`[burp-mcp]`);
 
