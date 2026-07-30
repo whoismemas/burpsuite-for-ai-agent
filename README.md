@@ -135,8 +135,12 @@ Agent calls `burp_send_to_burp` with type `send_to_repeater` → Burp opens Repe
 ## Options
 
 ```bash
-node src/index.js --port 9999     # Custom port (default: 9999)
+node src/index.js --port 9999                 # Custom port (default: 9999)
+node src/index.js --db /path/to/data.json     # Persistence file (default: burpai-data.json)
+node src/index.js --port 9001 --db custom.json
 ```
+
+Data persists across restarts when `--db` is set (or by default). The server auto-saves on every mutation and loads data on startup.
 
 Burp plugin URL configurable from the burpAI settings tab in Burp.
 

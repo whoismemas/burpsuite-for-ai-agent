@@ -9,6 +9,7 @@
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { z } from 'zod';
 
 // ──────────────────────────────────────────────
@@ -20,7 +21,7 @@ const MAX_PARAMS_PER_ENDPOINT = 256;
 const BODY_STRING_CAP = 64 * 1024;
 
 class CaptureStore {
-  constructor(maxEntries = 5000) {
+  constructor(maxEntries = 5000, dbPath = null) {
     this.requests = new Map();
     this.endpoints = new Map();
     this.snapshots = [];
@@ -30,6 +31,10 @@ class CaptureStore {
     this.maxEntries = Math.max(100, maxEntries);
     this.nextSeq = 1;
     this.lastActivityAt = 0;
+    this._dbPath = dbPath;
+    this._saveTimer = null;
+
+    if (dbPath) this._load();
   }
 
   ingest(raw) {
@@ -40,6 +45,7 @@ class CaptureStore {
     if (kind === 'ws-open' || kind === 'ws-send' || kind === 'ws-recv') {
       this._recordEndpoint('WS', obj.url || '', undefined, undefined);
       this.lastActivityAt = Date.now();
+      this._scheduleSave();
       return { ok: true };
     }
 
@@ -75,6 +81,7 @@ class CaptureStore {
     this._recordEndpoint(method, url, entry.requestBody, this._queryParams(url));
     this._pruneIfNeeded();
     this.lastActivityAt = Date.now();
+    this._scheduleSave();
     return { ok: true };
   }
 
@@ -95,6 +102,7 @@ class CaptureStore {
     this.snapshots.push(snap);
     if (this.snapshots.length > 100) this.snapshots.splice(0, this.snapshots.length - 100);
     this.lastActivityAt = Date.now();
+    this._scheduleSave();
     return { ok: true };
   }
 
@@ -122,12 +130,14 @@ class CaptureStore {
       this.outboundActions.splice(0, this.outboundActions.length - 200);
     }
     this.lastActivityAt = Date.now();
+    this._scheduleSave();
     return entry;
   }
 
   drainOutboundActions() {
     const actions = this.outboundActions;
     this.outboundActions = [];
+    this._scheduleSave();
     return actions;
   }
 
@@ -194,6 +204,7 @@ class CaptureStore {
     this.burpTasks.length = 0;
     this.burpIssues.clear();
     this.outboundActions.length = 0;
+    this._scheduleSave();
   }
 
   ingestBurpTask(raw) {
@@ -218,6 +229,7 @@ class CaptureStore {
     this.burpTasks.push(task);
     if (this.burpTasks.length > 1000) this.burpTasks.splice(0, this.burpTasks.length - 1000);
     this.lastActivityAt = Date.now();
+    this._scheduleSave();
     return { ok: true, task };
   }
 
@@ -249,6 +261,7 @@ class CaptureStore {
     };
     this._upsertBurpIssue(issue);
     this.lastActivityAt = Date.now();
+    this._scheduleSave();
     return { ok: true, issue };
   }
 
@@ -259,6 +272,7 @@ class CaptureStore {
       createdAt: issue.createdAt ?? Date.now(),
     });
     this.lastActivityAt = Date.now();
+    this._scheduleSave();
   }
 
   listBurpIssues() {
@@ -275,6 +289,64 @@ class CaptureStore {
         this.burpIssues.delete(k);
       }
     }
+  }
+
+  // ── Persistence ──
+
+  _saveSync() {
+    if (!this._dbPath) return;
+    try {
+      const data = {
+        requests: [...this.requests.entries()],
+        endpoints: [...this.endpoints.entries()].map(([k, v]) => {
+          const { queryParams, bodyParams, ...rest } = v;
+          return [k, { ...rest, queryParams: [...queryParams], bodyParams: [...bodyParams] }];
+        }),
+        snapshots: this.snapshots,
+        burpTasks: this.burpTasks,
+        burpIssues: [...this.burpIssues.entries()],
+        nextSeq: this.nextSeq,
+        lastActivityAt: this.lastActivityAt,
+      };
+      writeFileSync(this._dbPath, JSON.stringify(data), 'utf8');
+    } catch (err) {
+      console.error(`[burp-mcp] save error: ${err.message}`);
+    }
+  }
+
+  _load() {
+    if (!this._dbPath || !existsSync(this._dbPath)) return;
+    try {
+      const raw = readFileSync(this._dbPath, 'utf8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.requests)) {
+        this.requests = new Map(data.requests);
+      }
+      if (Array.isArray(data.endpoints)) {
+        this.endpoints = new Map(
+          data.endpoints.map(([k, v]) => [
+            k,
+            { ...v, queryParams: new Set(v.queryParams ?? []), bodyParams: new Set(v.bodyParams ?? []) },
+          ]),
+        );
+      }
+      if (Array.isArray(data.snapshots)) this.snapshots = data.snapshots;
+      if (Array.isArray(data.burpTasks)) this.burpTasks = data.burpTasks;
+      if (Array.isArray(data.burpIssues)) this.burpIssues = new Map(data.burpIssues);
+      if (typeof data.nextSeq === 'number') this.nextSeq = data.nextSeq;
+      if (typeof data.lastActivityAt === 'number') this.lastActivityAt = data.lastActivityAt;
+    } catch (err) {
+      console.error(`[burp-mcp] load error: ${err.message}, starting fresh`);
+    }
+  }
+
+  _scheduleSave() {
+    if (!this._dbPath) return;
+    if (this._saveTimer) clearTimeout(this._saveTimer);
+    this._saveTimer = setTimeout(() => {
+      this._saveTimer = null;
+      this._saveSync();
+    }, 500);
   }
 
   _recordEndpoint(method, url, body, queryParamsHint) {
@@ -614,8 +686,10 @@ function sendJSON(res, status, payload) {
 async function main() {
   const args = process.argv.slice(2);
   let port = 9999;
+  let dbPath = null;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port') port = parseInt(args[++i], 10) || 9999;
+    if (args[i] === '--db') dbPath = args[++i];
     if (args[i] === '--help' || args[i] === '-h') {
       console.error(`Burp MCP Server for OpenCode
 
@@ -623,6 +697,7 @@ Usage: node src/index.js [options]
 
 Options:
   --port <n>    HTTP ingest server port (default: 9999)
+  --db <path>   Data persistence file (default: burpai-data.json in cwd)
   --help        Show this help
 
 Register in opencode.json (.mcp.json):
@@ -643,8 +718,19 @@ On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
     }
   }
 
+  if (!dbPath) dbPath = `${process.cwd()}/burpai-data.json`;
+
   const token = randomBytes(16).toString('hex');
-  const store = new CaptureStore(5000);
+  const store = new CaptureStore(5000, dbPath);
+
+  // Graceful shutdown: save before exit
+  const shutdown = () => {
+    console.error('[burp-mcp] shutting down, saving data...');
+    store._saveSync();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 
   // Start HTTP ingest server
   let ingestHandle;
