@@ -625,23 +625,19 @@ Options:
   --port <n>    HTTP ingest server port (default: 9999)
   --help        Show this help
 
-Register in opencode.json:
-  "mcp": {
+Register in opencode.json (.mcp.json):
+  "mcpServers": {
     "burp": {
       "type": "local",
-      "command": ["node", "/path/to/oh-my-open-pentest/packages/burp-mcp/src/index.js"]
+      "command": ["node", "/absolute/path/to/burpsuite-for-ai-agent/src/index.js"]
     }
   }
 
-The burp-mcp package is bundled with oh-my-open-pentest.
-After install, the plugin is at:
-  packages/burp-mcp/plugin/burpAI.py
+Plugin file:
+  plugin/burpAI.py
 
-Load it in Burp: Extensions -> Add -> Python, then select burpAI.py.
+Load in Burp: Extensions -> Add -> Python, then select burpAI.py.
 On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
-
-Auto-register during install:
-  oh-my-open-pentest install --burp
 `);
       process.exit(0);
     }
