@@ -19,7 +19,7 @@
 
 ```
 Burp Suite (Linux / Windows)
-  └─ plugin/pentesterflow_burp.py (Jython plugin)
+  └─ plugin/burpAI.py (Jython plugin)
        │  HTTP POST /ingest (127.0.0.1:9999)
        │  GET /burp/outbound (poll every 2s)
        ▼
@@ -47,11 +47,11 @@ node src/index.js
 
 1. Burp Suite → **Extensions** → **Installed** → **Add**
 2. Extension type: `Python` (requires Jython 2.7)
-3. File: `plugin/pentesterflow_burp.py`
+3. File: `plugin/burpAI.py`
 
 ### 3. Verify
 
-In Burp's **PentesterFlow** tab, click **Check Status**. Should show:
+In Burp's **burpAI** tab, click **Check Status**. Should show:
 ```json
 { "ok": true, "requests": 0, "endpoints": 0 }
 ```
@@ -79,7 +79,7 @@ In Burp's **PentesterFlow** tab, click **Check Status**. Should show:
 ## Workflow
 
 ### Capture traffic
-Right-click a request in Burp (Proxy/Repeater) → `PentesterFlow: send request(s)`
+Right-click a request in Burp (Proxy/Repeater) → `burpAI: send request(s)`
 
 Then ask the agent:
 - `"burp_requests — show me what we captured"`
@@ -87,11 +87,11 @@ Then ask the agent:
 - `"burp_request_detail — get full details on request X"`
 
 ### Queue scan tasks
-Right-click → `PentesterFlow: send + queue scan`
+Right-click → `burpAI: send + queue scan`
 Agent picks it up via `burp_tasks`.
 
 ### Send findings back to Burp
-Agent calls `burp_import_issue` → then in Burp: PentesterFlow tab → **Import Issues**
+Agent calls `burp_import_issue` → then in Burp: burpAI tab → **Import Issues**
 
 ### Send requests to Repeater
 Agent calls `burp_send_to_burp` with type `send_to_repeater` → Burp opens a Repeater tab automatically.
@@ -100,7 +100,7 @@ Agent calls `burp_send_to_burp` with type `send_to_repeater` → Burp opens a Re
 
 ## Auto-forwarding
 
-In the PentesterFlow tab, enable:
+In the burpAI tab, enable:
 - **Auto-send Proxy responses** — all Proxy traffic sent to MCP server
 - **Auto-send Repeater responses** — Repeater traffic automatically forwarded
 - **Forward Burp Scanner issues** — scanner findings pushed to agent
@@ -118,7 +118,7 @@ In the PentesterFlow tab, enable:
 node src/index.js --port 9999
 ```
 
-The Burp plugin URL is configurable from the PentesterFlow settings tab.
+The Burp plugin URL is configurable from the burpAI settings tab.
 
 ---
 

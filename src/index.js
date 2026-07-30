@@ -4,7 +4,7 @@
 //
 // Usage: node src/index.js [--port 9999]
 //
-// Burp plugin (pentesterflow_burp.py) sends traffic to the HTTP bridge.
+// Burp plugin (burpAI.py) sends traffic to the HTTP bridge.
 // OpenCode queries the store via MCP tools over stdio.
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -480,7 +480,7 @@ function handleHttp(req, res, store, token) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Pentesterflow-Source, X-Pentesterflow-Token');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-BurpAI-Source, X-BurpAI-Token');
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -488,7 +488,7 @@ function handleHttp(req, res, store, token) {
     return;
   }
 
-  const header = req.headers['x-pentesterflow-token'];
+  const header = req.headers['x-burpai-token'];
   const headerToken = Array.isArray(header) ? (header[0] ?? '') : (header ?? '');
   if (headerToken) {
     const ab = Buffer.from(headerToken);
@@ -635,9 +635,9 @@ Register in opencode.json:
 
 The burp-mcp package is bundled with oh-my-open-pentest.
 After install, the plugin is at:
-  packages/burp-mcp/plugin/pentesterflow_burp.py
+  packages/burp-mcp/plugin/burpAI.py
 
-Load it in Burp: Extensions -> Add -> Python, then select pentesterflow_burp.py.
+Load it in Burp: Extensions -> Add -> Python, then select burpAI.py.
 On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
 
 Auto-register during install:
@@ -795,7 +795,7 @@ Auto-register during install:
 
   mcp.tool(
     'burp_import_issue',
-    'Submit a confirmed finding as a Burp-importable issue. The issue will appear in the bridge and can be pulled into Burp via the PentesterFlow Burp plugin.',
+    'Submit a confirmed finding as a Burp-importable issue. The issue will appear in the bridge and can be pulled into Burp via the burpAI Burp plugin.',
     {
       title: z.string().describe('Finding title (e.g., "SQL Injection in login parameter")'),
       severity: z.string().optional().describe('Severity: Critical, High, Medium, Low, Information'),
@@ -823,7 +823,7 @@ Auto-register during install:
         rawRequestB64: input.rawRequestB64 || undefined,
         rawResponseB64: input.rawResponseB64 || undefined,
       });
-      return { content: [{ type: 'text', text: `Issue "${input.title}" submitted successfully. Import in Burp via PentesterFlow tab -> Import Issues.` }] };
+      return { content: [{ type: 'text', text: `Issue "${input.title}" submitted successfully. Import in Burp via burpAI tab -> Import Issues.` }] };
     },
   );
 

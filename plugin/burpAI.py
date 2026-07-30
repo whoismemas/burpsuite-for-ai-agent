@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# PentesterFlow Burp Suite integration.
+# burpAI Burp Suite integration.
 #
 # Load in Burp: Extender -> Extensions -> Add -> Extension type: Python.
 # Requires Jython 2.7.x configured in Burp.
@@ -44,7 +44,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
         self.auto_sent_keys = set()
         self.auto_sent_order = []
 
-        callbacks.setExtensionName("PentesterFlow")
+        callbacks.setExtensionName("burpAI")
         callbacks.registerContextMenuFactory(self)
         callbacks.registerHttpListener(self)
         callbacks.registerScannerListener(self)
@@ -56,15 +56,15 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
         self._poll_timer = Timer(2000, _OutboundPoller(self))
         self._poll_timer.start()
 
-        self._println("PentesterFlow Burp extension loaded. Start PentesterFlow with --burp.")
+        self._println("burpAI Burp extension loaded. Run MCP server: node src/index.js")
 
     def getTabCaption(self):
-        return "PentesterFlow"
+        return "burpAI"
 
     def getUiComponent(self):
         panel = JPanel(BorderLayout())
         top = JPanel()
-        top.add(JLabel("PentesterFlow URL:"))
+        top.add(JLabel("burpAI URL:"))
         self.url_field = JTextField(self.base_url, 32)
         top.add(self.url_field)
 
@@ -103,13 +103,13 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
         if not selected:
             return items
 
-        items.add(JMenuItem("PentesterFlow: send request(s)", actionPerformed=lambda e: self._send_requests(selected)))
-        items.add(JMenuItem("PentesterFlow: send + queue scan", actionPerformed=lambda e: self._send_and_queue(selected, "scan")))
-        items.add(JMenuItem("PentesterFlow: send + queue /plan", actionPerformed=lambda e: self._send_and_queue(selected, "plan")))
-        items.add(JMenuItem("PentesterFlow: queue scan for request(s)", actionPerformed=lambda e: self._queue_task(selected, "scan")))
-        items.add(JMenuItem("PentesterFlow: queue /plan for request(s)", actionPerformed=lambda e: self._queue_task(selected, "plan")))
-        items.add(JMenuItem("PentesterFlow: add host/domain to scope", actionPerformed=lambda e: self._queue_task(selected, "scope")))
-        items.add(JMenuItem("PentesterFlow: import issues into Burp", actionPerformed=self._import_issues))
+        items.add(JMenuItem("burpAI: send request(s)", actionPerformed=lambda e: self._send_requests(selected)))
+        items.add(JMenuItem("burpAI: send + queue scan", actionPerformed=lambda e: self._send_and_queue(selected, "scan")))
+        items.add(JMenuItem("burpAI: send + queue /plan", actionPerformed=lambda e: self._send_and_queue(selected, "plan")))
+        items.add(JMenuItem("burpAI: queue scan for request(s)", actionPerformed=lambda e: self._queue_task(selected, "scan")))
+        items.add(JMenuItem("burpAI: queue /plan for request(s)", actionPerformed=lambda e: self._queue_task(selected, "plan")))
+        items.add(JMenuItem("burpAI: add host/domain to scope", actionPerformed=lambda e: self._queue_task(selected, "scope")))
+        items.add(JMenuItem("burpAI: import issues into Burp", actionPerformed=self._import_issues))
         items.add(JMenuItem("Burp: active scan selected request(s)", actionPerformed=lambda e: self._burp_active_scan(selected)))
         return items
 
@@ -137,7 +137,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
                 count += 1
             except Exception as exc:
                 self._log_error("send request failed", exc)
-        self._log("sent %d request(s) to PentesterFlow capture" % count)
+        self._log("sent %d request(s) to burpAI capture" % count)
         self._maybe_import_issues()
 
     def _send_and_queue(self, messages, action):
@@ -153,7 +153,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
                 count += 1
             except Exception as exc:
                 self._log_error("queue %s failed" % action, exc)
-        self._log("queued %d %s task(s) for PentesterFlow" % (count, action))
+        self._log("queued %d %s task(s) for burpAI" % (count, action))
         self._maybe_import_issues()
 
     def _burp_active_scan(self, messages):
@@ -214,10 +214,10 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
                 key = self._issue_import_key(item)
                 if key in self.imported_issue_keys:
                     continue
-                self.callbacks.addScanIssue(PentesterFlowIssue(item, self.helpers))
+                self.callbacks.addScanIssue(burpAIIssue(item, self.helpers))
                 self.imported_issue_keys.add(key)
                 imported += 1
-            self._log("imported %d PentesterFlow issue(s) into Burp" % imported)
+            self._log("imported %d burpAI issue(s) into Burp" % imported)
         except Exception as exc:
             self._log_error("import issues failed", exc)
 
@@ -232,14 +232,14 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
     def _show_requests(self, _event=None):
         try:
             data = self._get_json("/requests")
-            self._log("recent PentesterFlow requests: %s" % json.dumps(data[:10]))
+            self._log("recent burpAI requests: %s" % json.dumps(data[:10]))
         except Exception as exc:
             self._log_error("show requests failed", exc)
 
     def _show_tasks(self, _event=None):
         try:
             data = self._get_json("/burp/tasks")
-            self._log("queued PentesterFlow tasks: %s" % json.dumps(data[:10]))
+            self._log("queued burpAI tasks: %s" % json.dumps(data[:10]))
         except Exception as exc:
             self._log_error("show tasks failed", exc)
 
@@ -252,7 +252,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
             self.imported_issue_keys.clear()
             self.auto_sent_keys.clear()
             self.auto_sent_order = []
-            self._log("cleared PentesterFlow bridge state")
+            self._log("cleared burpAI bridge state")
         except Exception as exc:
             self._log_error("clear bridge failed", exc)
 
@@ -522,10 +522,10 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
     def _println(self, message):
         message = self._safe_unicode(message)
         try:
-            self.stdout.println(u"[PentesterFlow] " + message)
+            self.stdout.println(u"[burpAI] " + message)
         except Exception:
             try:
-                self.stdout.println(("[PentesterFlow] " + message).encode("utf-8", "replace"))
+                self.stdout.println(("[burpAI] " + message).encode("utf-8", "replace"))
             except Exception:
                 pass
 
@@ -561,7 +561,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
         port = params.get("port")
         https = params.get("https", False)
         raw_b64 = params.get("rawRequestB64")
-        tab_name = params.get("tabName", "PentesterFlow")
+        tab_name = params.get("tabName", "burpAI")
         if not host or not port or not raw_b64:
             self._log("send_to_repeater: missing host, port, or rawRequestB64")
             return
@@ -571,7 +571,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
 
     def _handle_add_scan_issue(self, params):
         url = params.get("url")
-        title = params.get("title", "PentesterFlow Finding")
+        title = params.get("title", "burpAI Finding")
         detail = params.get("detail", "")
         severity = params.get("severity", "Medium")
         if not url or not detail:
@@ -587,7 +587,7 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
             "rawResponseB64": params.get("rawResponseB64"),
         }
         try:
-            self.callbacks.addScanIssue(PentesterFlowIssue(issue_data, self.helpers))
+            self.callbacks.addScanIssue(burpAIIssue(issue_data, self.helpers))
             self._log("added scan issue: %s - %s" % (severity, title))
         except Exception as exc:
             self._log_error("add_scan_issue failed", exc)
@@ -606,7 +606,7 @@ class _OutboundPoller(ActionListener):
         self.ext._poll_outbound()
 
 
-class PentesterFlowIssue(IScanIssue):
+class burpAIIssue(IScanIssue):
     def __init__(self, data, helpers):
         self.data = data
         self.helpers = helpers
@@ -625,7 +625,7 @@ class PentesterFlowIssue(IScanIssue):
         return self._issue_url
 
     def getIssueName(self):
-        return self.data.get("title", "PentesterFlow Issue")
+        return self.data.get("title", "burpAI Issue")
 
     def getIssueType(self):
         return 0x08000000
@@ -649,7 +649,7 @@ class PentesterFlowIssue(IScanIssue):
         return "Tentative"
 
     def getIssueBackground(self):
-        return "Imported from PentesterFlow confirmed findings or bridge issue queue."
+        return "Imported from burpAI confirmed findings or bridge issue queue."
 
     def getRemediationBackground(self):
         return None
@@ -661,7 +661,7 @@ class PentesterFlowIssue(IScanIssue):
         if self.data.get("parameter"):
             parts.append("<p><b>Parameter:</b> %s</p>" % self.data.get("parameter"))
         if self.data.get("path"):
-            parts.append("<p><b>PentesterFlow report:</b> %s</p>" % self.data.get("path"))
+            parts.append("<p><b>burpAI report:</b> %s</p>" % self.data.get("path"))
         return "\n".join(parts)
 
     def getRemediationDetail(self):
@@ -688,7 +688,7 @@ class PentesterFlowIssue(IScanIssue):
         if self._issue_url.getQuery():
             path += "?" + self._issue_url.getQuery()
         method = self.data.get("method", "GET")
-        req = "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: PentesterFlow\r\n\r\n" % (
+        req = "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: burpAI\r\n\r\n" % (
             method,
             path,
             self._issue_url.getHost(),
@@ -729,7 +729,7 @@ class HttpRequestResponse(IHttpRequestResponse):
         self._service = service
 
     def getComment(self):
-        return "Imported from PentesterFlow"
+        return "Imported from burpAI"
 
     def setComment(self, _comment):
         pass
