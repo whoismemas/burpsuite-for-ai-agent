@@ -81,7 +81,7 @@ In Burp's **burpAI** tab, click **Check Status**. Connected:
 
 ---
 
-## MCP Tools (11 tools)
+## MCP Tools (16 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -94,7 +94,12 @@ In Burp's **burpAI** tab, click **Check Status**. Connected:
 | `burp_import_issue` | Submit a finding (title, url, severity, detail) |
 | `burp_snapshot` | Latest session snapshot (cookies, storage) |
 | `burp_send_to_burp` | Queue action: send_to_repeater, add_scan_issue, console_log |
+| `burp_replay` | Modify captured request → send to Burp Repeater |
 | `burp_outbound_status` | Pending outbound actions |
+| `burp_scan_url` | Run nuclei scan against a single URL |
+| `burp_scan_bulk` | Run nuclei scan against all captured endpoints |
+| `burp_scan_results` | List/display nuclei scan results |
+| `burp_scan_import_all` | Import nuclei findings as Burp issues |
 | `burp_clear` | Clear all captured data |
 
 ---
@@ -118,6 +123,60 @@ Agent calls `burp_import_issue` → Burp tab → **Import Issues**
 
 ### Agent → Burp Repeater
 Agent calls `burp_send_to_burp` with type `send_to_repeater` → Burp opens Repeater tab.
+
+---
+
+## Agent-Driven Scanning
+
+This is the core custom scanner flow: **Burp captures → agent thinks → agent modifies → Burp executes**.
+
+```
+Burp (Proxy → History)
+  │ right-click → burpAI: send request(s)
+  ▼
+MCP server ←── captures request
+  │
+  ▼
+Agent reads via burp_requests / burp_request_detail
+  │
+  │ Agent thinks: "endpoint /api/login takes username, try SQLi"
+  │
+  ▼
+Agent calls burp_replay({
+  request_id: "burp:burp-12345",
+  set_body: '{"username":"admin\\' OR 1=1--","password":"x"}'
+})
+  │
+  ▼
+MCP server → Burp Repeater → Burp executes HTTP call
+  │
+  ▼ (auto-forward enabled)
+Response captured back → Agent reads & analyzes
+  │
+  ▼
+burp_import_issue → if vulnerable
+```
+
+**Key tool**: `burp_replay` takes a captured request ID, applies modifications (method, path, headers, body), and sends it to Burp Repeater. No need to manually craft raw bytes — the agent just specifies what to change.
+
+**Requirements**:
+- Enable **Auto-send Repeater responses** in Burp plugin settings
+- This ensures the agent sees every Repeater response automatically
+
+---
+
+## External Scanning (nuclei)
+
+Optionally run [nuclei](https://docs.projectdiscovery.io/tools/nuclei/install) scans directly from the bridge:
+
+| Tool | Use case |
+|------|----------|
+| `burp_scan_url` | Scan one URL with nuclei templates |
+| `burp_scan_bulk` | Scan all captured endpoints at once |
+| `burp_scan_results` | Review scan history |
+| `burp_scan_import_all` | Import nuclei findings as Burp issues |
+
+Nuclei must be installed on the same machine. Findings with High/Critical severity are auto-imported as Burp issues.
 
 ---
 

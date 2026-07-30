@@ -10,6 +10,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { z } from 'zod';
 
 // ──────────────────────────────────────────────
@@ -28,6 +29,8 @@ class CaptureStore {
     this.burpTasks = [];
     this.burpIssues = new Map();
     this.outboundActions = [];
+    this.scanResults = [];
+    this.scanIdSeq = 0;
     this.maxEntries = Math.max(100, maxEntries);
     this.nextSeq = 1;
     this.lastActivityAt = 0;
@@ -204,6 +207,8 @@ class CaptureStore {
     this.burpTasks.length = 0;
     this.burpIssues.clear();
     this.outboundActions.length = 0;
+    this.scanResults.length = 0;
+    this.scanIdSeq = 0;
     this._scheduleSave();
   }
 
@@ -291,6 +296,40 @@ class CaptureStore {
     }
   }
 
+  // ── Scan Results ──
+
+  addScanResult(entry) {
+    this.scanResults.push(entry);
+    if (this.scanResults.length > 200) this.scanResults.splice(0, this.scanResults.length - 200);
+    if (entry.findings && entry.findings.length) {
+      for (const f of entry.findings) {
+        this._upsertBurpIssue({
+          id: `scan:${entry.id}:${f.templateId ?? f.name}`,
+          title: `[${f.severity}] ${f.name}`,
+          severity: f.severity,
+          url: f.matchedAt ?? entry.url,
+          detail: f.description ?? f.info ?? '',
+          rawRequestB64: f.request ? Buffer.from(f.request).toString('base64') : undefined,
+          rawResponseB64: f.response ? Buffer.from(f.response).toString('base64') : undefined,
+          createdAt: Date.now(),
+        });
+      }
+    }
+    this.lastActivityAt = Date.now();
+    this._scheduleSave();
+  }
+
+  listScanResults() {
+    return this.scanResults.map(r => ({
+      ...r,
+      findings: r.findings.map(f => ({ ...f, request: undefined, response: undefined })),
+    })).reverse();
+  }
+
+  getScanResult(id) {
+    return this.scanResults.find(r => r.id === id);
+  }
+
   // ── Persistence ──
 
   _saveSync() {
@@ -305,6 +344,8 @@ class CaptureStore {
         snapshots: this.snapshots,
         burpTasks: this.burpTasks,
         burpIssues: [...this.burpIssues.entries()],
+        scanResults: this.scanResults,
+        scanIdSeq: this.scanIdSeq,
         nextSeq: this.nextSeq,
         lastActivityAt: this.lastActivityAt,
       };
@@ -333,6 +374,8 @@ class CaptureStore {
       if (Array.isArray(data.snapshots)) this.snapshots = data.snapshots;
       if (Array.isArray(data.burpTasks)) this.burpTasks = data.burpTasks;
       if (Array.isArray(data.burpIssues)) this.burpIssues = new Map(data.burpIssues);
+      if (Array.isArray(data.scanResults)) this.scanResults = data.scanResults;
+      if (typeof data.scanIdSeq === 'number') this.scanIdSeq = data.scanIdSeq;
       if (typeof data.nextSeq === 'number') this.nextSeq = data.nextSeq;
       if (typeof data.lastActivityAt === 'number') this.lastActivityAt = data.lastActivityAt;
     } catch (err) {
@@ -507,6 +550,78 @@ class CaptureStore {
     if (value.length <= BODY_STRING_CAP) return value;
     return `${value.slice(0, BODY_STRING_CAP)}...<truncated ${value.length - BODY_STRING_CAP} chars>`;
   }
+}
+
+// ──────────────────────────────────────────────
+// Nuclei Scanner
+// ──────────────────────────────────────────────
+
+function checkNuclei() {
+  return new Promise((resolve) => {
+    const proc = spawn('nuclei', ['-version'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 5000,
+    });
+    proc.on('close', (code) => resolve(code === 0));
+    proc.on('error', () => resolve(false));
+  });
+}
+
+function runNucleiScan(url, options = {}) {
+  return new Promise((resolve) => {
+    const {
+      templates,
+      severity,
+      timeout,
+      rateLimit,
+      retries,
+    } = options;
+
+    const args = ['-u', url, '-json', '-silent'];
+    if (templates) args.push('-t', templates);
+    if (severity) args.push('-severity', severity);
+    if (timeout) args.push('-timeout', String(timeout));
+    if (rateLimit) args.push('-rate-limit', String(rateLimit));
+    if (retries) args.push('-retries', String(retries));
+
+    const findings = [];
+    const startTime = Date.now();
+    let stderr = '';
+
+    const proc = spawn('nuclei', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 120_000,
+    });
+
+    proc.stdout.on('data', (chunk) => {
+      const lines = chunk.toString('utf8').split('\n').filter(Boolean);
+      for (const line of lines) {
+        try {
+          findings.push(JSON.parse(line));
+        } catch { /* skip unparseable lines */ }
+      }
+    });
+
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+
+    proc.on('close', (code) => {
+      resolve({
+        findings,
+        elapsedMs: Date.now() - startTime,
+        exitCode: code,
+        stderr: stderr.slice(0, 2000),
+      });
+    });
+
+    proc.on('error', (err) => {
+      resolve({
+        findings: [],
+        elapsedMs: Date.now() - startTime,
+        exitCode: -1,
+        stderr: err.message,
+      });
+    });
+  });
 }
 
 // ──────────────────────────────────────────────
@@ -969,6 +1084,102 @@ On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
   );
 
   mcp.tool(
+    'burp_replay',
+    'Modify a captured request and send it to Burp Repeater. Agent specifies which parameter to inject — the modified request opens in Burp Repeater where Burp executes the HTTP call and the response auto-forwards back to the bridge.',
+    {
+      request_id: z.string().describe('Request id from burp_requests output'),
+      set_method: z.string().optional().describe('Override HTTP method'),
+      set_path: z.string().optional().describe('Override URL path + query (e.g. /api/login?user=admin)'),
+      set_header: z.string().optional().describe('Add or override a header. Format: "Header-Name: value"'),
+      remove_header: z.string().optional().describe('Remove a header by name (case-insensitive)'),
+      set_body: z.string().optional().describe('Replace request body entirely'),
+      tab_name: z.string().optional().describe('Tab label in Burp Repeater (default: "burpAI replay")'),
+    },
+    async (input) => {
+      if (!input.request_id) {
+        return { content: [{ type: 'text', text: 'error: request_id is required' }], isError: true };
+      }
+      const orig = store.getRequest(input.request_id);
+      if (!orig) {
+        return { content: [{ type: 'text', text: `error: no request with id ${input.request_id}` }], isError: true };
+      }
+
+      // Get original host/port/protocol from URL
+      let u;
+      try { u = new URL(orig.url); } catch {
+        return { content: [{ type: 'text', text: 'error: original request URL is malformed' }], isError: true };
+      }
+      const host = orig.requestHeaders?.find(h => h.name?.toLowerCase() === 'host')?.value ?? u.host;
+      const hostname = host.split(':')[0];
+      const port = u.port ? parseInt(u.port, 10) : (u.protocol === 'https:' ? 443 : 80);
+      const https = u.protocol === 'https:';
+
+      // Build modified HTTP request
+      const method = input.set_method ?? orig.method ?? 'GET';
+      const path = input.set_path || (u.pathname + u.search) || '/';
+      const body = input.set_body ?? orig.requestBody ?? '';
+
+      // Collect headers
+      const headerLines = [`${method} ${path} HTTP/1.1`];
+      const removeHdr = (input.remove_header ?? '').toLowerCase();
+      const setHdrRaw = input.set_header ?? '';
+      let setHdrApplied = false;
+
+      const origHeaders = orig.requestHeaders ?? [];
+      for (const h of origHeaders) {
+        const hName = h.name?.trim() ?? '';
+        if (!hName) continue;
+        if (hName.toLowerCase() === removeHdr) continue;
+        if (setHdrRaw && hName.toLowerCase() === setHdrRaw.split(':')[0]?.trim().toLowerCase()) {
+          headerLines.push(setHdrRaw);
+          setHdrApplied = true;
+          continue;
+        }
+        headerLines.push(`${hName}: ${h.value ?? ''}`);
+      }
+      if (setHdrRaw && !setHdrApplied) headerLines.push(setHdrRaw);
+      headerLines.push(`Host: ${host}`);
+      headerLines.push('Connection: close');
+      if (body) {
+        const hasCL = origHeaders.some(h => h.name?.toLowerCase() === 'content-length');
+        if (!hasCL && !setHdrRaw?.toLowerCase().startsWith('content-length')) {
+          headerLines.push(`Content-Length: ${Buffer.byteLength(body, 'utf8')}`);
+        }
+      }
+
+      const raw = headerLines.join('\r\n') + '\r\n\r\n' + body;
+      const rawB64 = Buffer.from(raw).toString('base64');
+
+      store.addOutboundAction('send_to_repeater', {
+        host: hostname,
+        port,
+        https,
+        rawRequestB64: rawB64,
+        tabName: input.tab_name || 'burpAI replay',
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            ok: true,
+            sent_to: 'Burp Repeater',
+            host: hostname,
+            port,
+            https,
+            tab: input.tab_name || 'burpAI replay',
+            method,
+            path,
+            headers: headerLines.length,
+            bodyLength: body.length,
+            modified_request: raw.slice(0, 2000),
+          }, null, 2),
+        }],
+      };
+    },
+  );
+
+  mcp.tool(
     'burp_outbound_status',
     'List pending outbound actions queued for the Burp plugin to execute. Actions remain here until the Burp plugin polls and drains them.',
     {},
@@ -989,6 +1200,189 @@ On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
     async () => {
       store.clear();
       return { content: [{ type: 'text', text: 'Burp bridge store cleared.' }] };
+    },
+  );
+
+  // ── Scan Tools ──
+
+  mcp.tool(
+    'burp_scan_url',
+    'Run nuclei scan against a single URL. Returns findings with severity, name, and matched details. High/Critical findings are auto-imported as Burp issues.',
+    {
+      url: z.string().describe('Full URL to scan (e.g. https://target.com/api/login)'),
+      templates: z.string().optional().describe('Nuclei template filter (e.g. "cves,misconfig" or path to custom .yaml)'),
+      severity: z.string().optional().describe('Minimum severity: info, low, medium, high, critical (default: low)'),
+      timeout: z.number().int().optional().describe('Request timeout per template in seconds (default: 10)'),
+      rate_limit: z.number().int().optional().describe('Max requests per second (default: 150)'),
+      retries: z.number().int().optional().describe('Retry count per request (default: 1)'),
+    },
+    async (input) => {
+      const hasNuclei = await checkNuclei();
+      if (!hasNuclei) {
+        return { content: [{ type: 'text', text: 'nuclei not found. Install: https://docs.projectdiscovery.io/tools/nuclei/install' }], isError: true };
+      }
+      const result = await runNucleiScan(input.url, {
+        templates: input.templates,
+        severity: input.severity || 'low',
+        timeout: input.timeout,
+        rateLimit: input.rate_limit,
+        retries: input.retries,
+      });
+      const scanEntry = {
+        id: ++store.scanIdSeq,
+        url: input.url,
+        type: 'nuclei',
+        startedAt: Date.now() - result.elapsedMs,
+        finishedAt: Date.now(),
+        elapsedMs: result.elapsedMs,
+        exitCode: result.exitCode,
+        findings: result.findings.map(f => ({
+          templateId: f['template-id'] ?? '',
+          name: f.name ?? f.info?.name ?? 'unknown',
+          severity: f.severity ?? 'unknown',
+          description: f.description ?? f.info?.description ?? '',
+          matchedAt: f['matched-at'] ?? input.url,
+          extractedResults: f['extracted-results'] ?? [],
+          curlCommand: f['curl-command'] ?? '',
+          tags: (f['template-id'] ?? '').split('-'),
+          request: f.request ?? '',
+          response: f.response ?? '',
+        })),
+        stderr: result.stderr || undefined,
+      };
+      store.addScanResult(scanEntry);
+      const findings = scanEntry.findings.map(f => ({
+        templateId: f.templateId,
+        severity: f.severity,
+        name: f.name,
+        matchedAt: f.matchedAt,
+      }));
+      const summary = {
+        scanId: scanEntry.id,
+        url: input.url,
+        total: scanEntry.findings.length,
+        elapsedMs: result.elapsedMs,
+        exitCode: result.exitCode,
+        findings,
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }] };
+    },
+  );
+
+  mcp.tool(
+    'burp_scan_bulk',
+    'Run nuclei scan against all unique endpoints from captured traffic. Capped at 25 URLs to avoid excessive load.',
+    {
+      severity: z.string().optional().describe('Minimum severity filter'),
+      templates: z.string().optional().describe('Nuclei template filter'),
+      max_urls: z.number().int().optional().describe('Maximum URLs to scan (default: 25)'),
+    },
+    async (input) => {
+      const hasNuclei = await checkNuclei();
+      if (!hasNuclei) {
+        return { content: [{ type: 'text', text: 'nuclei not found. Install: https://docs.projectdiscovery.io/tools/nuclei/install' }], isError: true };
+      }
+      const eps = store.listEndpoints({});
+      const urls = [...new Set(eps.map(e => e.url))].slice(0, input.max_urls ?? 25);
+      if (urls.length === 0) {
+        return { content: [{ type: 'text', text: 'No endpoints in store to scan.' }] };
+      }
+      const results = [];
+      for (const url of urls) {
+        const result = await runNucleiScan(url, {
+          templates: input.templates,
+          severity: input.severity || 'low',
+        });
+        const scanEntry = {
+          id: ++store.scanIdSeq,
+          url,
+          type: 'nuclei',
+          startedAt: Date.now() - result.elapsedMs,
+          finishedAt: Date.now(),
+          elapsedMs: result.elapsedMs,
+          exitCode: result.exitCode,
+          findings: result.findings.map(f => ({
+            templateId: f['template-id'] ?? '',
+            name: f.name ?? f.info?.name ?? 'unknown',
+            severity: f.severity ?? 'unknown',
+            description: f.description ?? f.info?.description ?? '',
+            matchedAt: f['matched-at'] ?? url,
+            extractedResults: f['extracted-results'] ?? [],
+            curlCommand: f['curl-command'] ?? '',
+            tags: (f['template-id'] ?? '').split('-'),
+            request: f.request ?? '',
+            response: f.response ?? '',
+          })),
+          stderr: result.stderr || undefined,
+        };
+        store.addScanResult(scanEntry);
+        results.push({
+          scanId: scanEntry.id,
+          url,
+          findings: scanEntry.findings.length,
+          elapsedMs: result.elapsedMs,
+          exitCode: result.exitCode,
+        });
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ scanned: urls.length, results }, null, 2) }] };
+    },
+  );
+
+  mcp.tool(
+    'burp_scan_results',
+    'List previous nuclei scan runs with finding counts. Use burp_issues to see auto-imported findings.',
+    {
+      scan_id: z.number().int().optional().describe('Return detail for a specific scan ID'),
+    },
+    async (input) => {
+      if (input.scan_id) {
+        const detail = store.getScanResult(input.scan_id);
+        if (!detail) return { content: [{ type: 'text', text: `No scan found with id ${input.scan_id}` }], isError: true };
+        return { content: [{ type: 'text', text: JSON.stringify(detail, null, 2) }] };
+      }
+      const list = store.listScanResults().map(r => ({
+        scanId: r.id,
+        url: r.url,
+        type: r.type,
+        findings: r.findings.length,
+        elapsedMs: r.elapsedMs,
+        exitCode: r.exitCode,
+        finishedAt: new Date(r.finishedAt).toISOString(),
+      }));
+      if (list.length === 0) return { content: [{ type: 'text', text: 'No scans performed yet.' }] };
+      return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] };
+    },
+  );
+
+  mcp.tool(
+    'burp_scan_import_all',
+    'Manually import all nuclei findings from a specific scan as Burp issues. By default, High/Critical findings are auto-imported; use this for lower severity findings.',
+    {
+      scan_id: z.number().int().optional().describe('Scan ID to import findings from. If omitted, imports from all scans.'),
+      min_severity: z.string().optional().describe('Minimum severity to import: info, low, medium, high, critical (default: info)'),
+    },
+    async (input) => {
+      const sevOrder = ['info', 'low', 'medium', 'high', 'critical'];
+      const minSev = input.min_severity ? sevOrder.indexOf(input.min_severity.toLowerCase()) : 0;
+      let imported = 0;
+      const scans = input.scan_id ? [store.getScanResult(input.scan_id)].filter(Boolean) : store.scanResults;
+      for (const scan of scans) {
+        for (const f of scan.findings) {
+          const fSevIdx = sevOrder.indexOf(f.severity?.toLowerCase() ?? '');
+          if (fSevIdx < minSev) continue;
+          store.addBurpIssue({
+            id: `scan-manual:${scan.id}:${f.templateId ?? f.name}`,
+            title: `[${f.severity}] ${f.name}`,
+            severity: f.severity,
+            url: f.matchedAt ?? scan.url,
+            detail: f.description || f.info || '',
+            rawRequestB64: f.request ? Buffer.from(f.request).toString('base64') : undefined,
+            createdAt: Date.now(),
+          });
+          imported++;
+        }
+      }
+      return { content: [{ type: 'text', text: `Imported ${imported} finding(s) as Burp issues. Use burp_issues to list them, then Burp plugin -> Import Issues to push into Burp.` }] };
     },
   );
 
