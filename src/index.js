@@ -10,7 +10,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { z } from 'zod';
 
 // ──────────────────────────────────────────────
@@ -838,6 +838,9 @@ On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
   }
 
   if (!dbPath) dbPath = `${process.cwd()}/burpai-data.json`;
+
+  // Free preferred port (Linux/WSL) so Burp always finds the server
+  try { execSync(`fuser -k ${port}/tcp 2>/dev/null`, { stdio: 'ignore', timeout: 3000 }); } catch { /* ok */ }
 
   const token = randomBytes(16).toString('hex');
   const store = new CaptureStore(5000, dbPath);
