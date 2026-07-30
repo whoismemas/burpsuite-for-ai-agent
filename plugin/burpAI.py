@@ -114,7 +114,8 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
         return items
 
     def _save_settings(self, _event):
-        self.base_url = self.url_field.getText().strip().rstrip("/") or DEFAULT_BASE_URL
+        manual = self.url_field.getText().strip().rstrip("/") or DEFAULT_BASE_URL
+        self.base_url = manual
         self.auto_import_issues = self.auto_box.isSelected()
         self.auto_send_proxy = self.auto_proxy_box.isSelected()
         self.auto_send_repeater = self.auto_repeater_box.isSelected()
@@ -122,11 +123,18 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
         self._log("settings saved: %s" % self.base_url)
 
     def _check_status(self, _event):
-        try:
-            data = self._get_json("/status")
-            self._log("status: %s" % json.dumps(data))
-        except Exception as exc:
-            self._log_error("status failed", exc)
+        for port in [9999, 9998, 9997, 9996, 9995]:
+            url = "http://127.0.0.1:%d" % port
+            try:
+                data = self._get_json_from_url(url + "/status")
+                self.base_url = url
+                self.url_field.setText(url)
+                self._log("status: %s" % json.dumps(data))
+                self._log("auto-detected server at %s" % url)
+                return
+            except Exception:
+                continue
+        self._log_error("status failed: server not found on ports 9995-9999", Exception("not found"))
 
     def _send_requests(self, messages):
         count = 0
@@ -416,6 +424,11 @@ class BurpExtender(IBurpExtender, IContextMenuFactory, IHttpListener, IScannerLi
         res = urllib2.urlopen(self.base_url + path, timeout=10)
         text = res.read()
         return self._decode_json_response(path, text)
+
+    def _get_json_from_url(self, full_url):
+        res = urllib2.urlopen(full_url, timeout=3)
+        text = res.read()
+        return self._decode_json_response(full_url, text)
 
     def _decode_json_response(self, path, raw):
         text = self._strip_bom(self._response_text(raw)).strip()
