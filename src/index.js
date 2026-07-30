@@ -630,26 +630,30 @@ function runNucleiScan(url, options = {}) {
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
-function startIngestServer(store, port, token) {
+function startIngestServer(store, preferredPort, token) {
   const host = '127.0.0.1';
-  const server = createServer((req, res) => handleHttp(req, res, store, token));
 
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, () => {
-      const addr = server.address();
-      const boundPort = addr && typeof addr === 'object' && 'port' in addr ? addr.port : port;
-      const url = `http://${host}:${boundPort}`;
-      console.error(`[burp-mcp] ingest server listening at ${url}`);
-      resolve({
-        port: boundPort,
-        host,
-        url,
-        token,
-        close: () => new Promise((res) => server.close(() => res())),
+  function tryListen(port) {
+    return new Promise((resolve, reject) => {
+      const server = createServer((req, res) => handleHttp(req, res, store, token));
+      server.once('error', (err) => { server.close(); reject(err); });
+      server.listen(port, host, () => {
+        const addr = server.address();
+        const boundPort = addr && typeof addr === 'object' && 'port' in addr ? addr.port : port;
+        const url = `http://${host}:${boundPort}`;
+        console.error(`[burp-mcp] ingest server listening at ${url}`);
+        resolve({
+          port: boundPort,
+          host,
+          url,
+          token,
+          close: () => new Promise((res) => server.close(() => res())),
+        });
       });
     });
-  });
+  }
+
+  return tryListen(preferredPort).catch(() => tryListen(0));
 }
 
 function handleHttp(req, res, store, token) {
@@ -847,16 +851,16 @@ On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // Start HTTP ingest server
-  let ingestHandle;
-  try {
-    ingestHandle = await startIngestServer(store, port, token);
-    console.error(`[burp-mcp] Burp bridge URL: ${ingestHandle.url}`);
-    console.error(`[burp-mcp] Auth token: ${token}`);
-  } catch (err) {
-    console.error(`[burp-mcp] failed to start ingest server on :${port}: ${err.message}`);
-    process.exit(1);
-  }
+  // Start HTTP ingest server (auto-find port if preferred is taken)
+  ingestHandle = await startIngestServer(store, port, token);
+  console.error(`[burp-mcp] Burp bridge URL: ${ingestHandle.url}`);
+  console.error(`[burp-mcp] Auth token: ${token}`);
+  console.error(`[burp-mcp]`);
+  console.error(`[burp-mcp] ── SETUP ──`);
+  console.error(`[burp-mcp] Burp plugin URL: ${ingestHandle.url}`);
+  console.error(`[burp-mcp] .mcp.json command: ["node", "${process.argv[1]}", "--port", "${ingestHandle.port}"]`);
+  console.error(`[burp-mcp] ─────────────────`);
+  console.error(`[burp-mcp]`);
 
   const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');

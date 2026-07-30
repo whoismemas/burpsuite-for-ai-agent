@@ -2,7 +2,7 @@
   "mcpServers": {
     "burp": {
       "type": "local",
-      "command": ["node", "/ABSOLUTE/PATH/TO/burpsuite-for-ai-agent/src/index.js"]
+      "command": ["node", "C:/burpai/src/index.js"]
     }
   }
 }
