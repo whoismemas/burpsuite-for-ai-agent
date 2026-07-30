@@ -852,7 +852,7 @@ On Windows + WSL, copy the file from WSL to Windows Downloads/ first.
   process.on('SIGTERM', shutdown);
 
   // Start HTTP ingest server (auto-find port if preferred is taken)
-  ingestHandle = await startIngestServer(store, port, token);
+  const ingestHandle = await startIngestServer(store, port, token);
   console.error(`[burp-mcp] Burp bridge URL: ${ingestHandle.url}`);
   console.error(`[burp-mcp] Auth token: ${token}`);
   console.error(`[burp-mcp]`);
